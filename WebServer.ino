@@ -38,7 +38,18 @@ unsigned long timeToCheck ;
 unsigned long timeToCheckEthernetStop;
 unsigned long timeToCheckContent;
 unsigned long timeToCheckEthernet;
+unsigned long timeToCheckGetDatePaths;
+unsigned long timeToCheckGetDateSumSizes;
 
+
+String getDatePaths[200];
+int getDatePathsCount;
+int getDatePathsPosition;
+long getDateSize;
+String previousYear;
+File getDateSumSizesFile;
+String getDateSumSizesEndsWith;
+long getDateSumSizesSize;
 
 void setup() {
   // Open serial communications and wait for port to open:
@@ -63,6 +74,9 @@ void setup() {
   timeToCheckEthernet = millis();
   timeToCheckEthernetStop = maxMillis;
   timeToCheckContent = maxMillis;
+  timeToCheckGetDatePaths = maxMillis;
+  previousYear = "";
+  timeToCheckGetDateSumSizes = maxMillis;
 }
 
 int stopCounter = 0;
@@ -71,6 +85,8 @@ EthernetClient client;
 
 const uint8_t daysArray [] PROGMEM = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
 const uint8_t dowArray[] PROGMEM = { 0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4 };
+
+
 
 void loop() {
 
@@ -98,70 +114,53 @@ void loop() {
         while (client.connected()) {
           if (client.available()) {
             milli = millis();
-            Serial.print("-3:");
-            Serial.println(millis());
             int size = client.available();
             unsigned char buff[size];
-            Serial.print("-2:");
-            Serial.println(millis());
             int r = client.read(buff, size);
-            Serial.print("-1:");
-            Serial.println(millis());
             char* filename = processFile((char*)buff);
             Serial.print("Requested: ");
             Serial.println(filename);
-            Serial.print("0:");
-            Serial.println(millis());
 
             //GetYears.cshtml?0008|0009|0010|0011|0012|0101|0102|0103|0104|0105|0106|
 
             if (strstr(filename, "GetYears.cshtml?") != 0) {
               code200(client, filename);
               String years = String(filename).substring(String(filename).indexOf("?") + 1);
+              String files[50];
+              int outlen = listDir("/Data/", true, files);
+              getDatePathsCount = 0;
 
-              File dataDir = SD.open("/Data/");
-              if (dataDir) {
-                dataDir.rewindDirectory();
-                while (true) {
-                  File entry =  dataDir.openNextFile();
-                  if (! entry) {
-                    // no more files
-                    // return to the first file in the directory
-                    dataDir.rewindDirectory();
-                    break;
-                  }
+              String dates[50];
+              int outlenDates = splitByDelim("|", years, dates);
+              for (int i = 0; i < outlen; i++) {
+                String yearDirectory = files[i];
+                Serial.println(yearDirectory);
+                long size = 0;
+                uint8_t yearDirectoryInt = yearDirectory.toInt();
+                byte bytes[] = {yearDirectoryInt};
 
-                  //Serial.print(entry.name());
-                  if (entry.isDirectory()) {
-                   String yearDirectory = entry.name();
-                   uint8_t yearDirectoryInt = yearDirectory.toInt();
-                   client.write(yearDirectoryInt);
-                   
-                   String toSplit = years;
-                   String delimiter = "|";
-                   
-                   String items[30];
-                   splitByDelim(delimiter,toSplit,items);
-                   int arraySize = sizeof(items) / sizeof(items[0]);
-                   for(int i =0; i < arraySize; i++) {
-                     if (items[i] != "") {
-                       String date = items[i];
-                       uint8_t year = date.substring(0,2).toInt();
-                       uint8_t month = date.substring(2,4).toInt()+ yearDirectoryInt;
-                       
-                       String filePath = "/Data/" + String(year) + "/" + String(month) + "/";
-                        
-                     }
-                   }
-                   
+                for (int j = 0; j < outlenDates; j++)
+                {
+
+                  String date = dates[j];
+                  if (date != "") {
+                    uint8_t year = date.substring(0, 2).toInt() + yearDirectoryInt;
+                    uint8_t month = date.substring(2, 4).toInt() ;
+
+                    String filePath = "/Data/" + String(year) + "/" + String(month) + "/";
+                    getDatePaths[getDatePathsCount] = String(yearDirectoryInt)+"/"+String(yearDirectoryInt+1) + "," + filePath;
+                    getDatePathsCount++;
+
                   }
                 }
+
               }
 
-             
 
 
-
+              registerGetDate();
+              //client.println();
+              timeToCheckEthernet = maxMillis;
               break;
             }
 
@@ -232,6 +231,92 @@ void loop() {
     }
   }
 
+
+  if (millis() > timeToCheckGetDatePaths) {
+    Serial.print("B1:");
+    Serial.println(getDatePathsPosition);
+    Serial.print("B2:");
+    Serial.println(getDatePathsCount);
+
+    if (getDatePathsPosition < getDatePathsCount) {
+      String getDatePath = getDatePaths[getDatePathsPosition];
+      Serial.print("B3:");
+      Serial.println(getDatePath);
+      getDateSize += getDateSumSizesSize;
+      getDateSumSizesSize = 0;
+      String year = String(getDatePath).substring(0, String(getDatePath).indexOf(","));
+      Serial.print("B4:");
+      Serial.println(year);
+      String path = String(getDatePath).substring(String(getDatePath).indexOf(",") + 1);
+      Serial.print("B5:");
+      Serial.println(path);
+      if (previousYear != "" && year != previousYear) {
+        int firstYear = String(previousYear).substring(0, String(previousYear).indexOf("/")).toInt();
+        client.write(firstYear);
+        long halfSize = getDateSize / 2;
+        byte bytes2[4] ;
+        bytes2[0] =  halfSize;
+        bytes2[1] =  halfSize >> 8;
+        bytes2[2] =  halfSize >> 16;
+        bytes2[3] =  halfSize >> 24;
+        client.write(bytes2, 4);
+        getDateSize = 0;
+      }
+      previousYear = year;
+      //getDateSize = getDateSize + sumSizes(path,".TXT");
+      timeToCheckGetDatePaths = maxMillis;
+      registerGetDateSumSizes(path, ".TXT");
+
+
+    } else {
+      getDateSize += getDateSumSizesSize;
+      getDateSumSizesSize = 0;
+      int firstYear = String(previousYear).substring(0, String(previousYear).indexOf("/")).toInt();
+      client.write(firstYear);
+      long halfSize = getDateSize / 2;
+      byte bytes2[4] ;
+      bytes2[0] =  halfSize;
+      bytes2[1] =  halfSize >> 8;
+      bytes2[2] =  halfSize >> 16;
+      bytes2[3] =  halfSize >> 24;
+      client.write(bytes2, 4);
+      getDateSize = 0;
+      previousYear = "";
+      getDatePathsPosition = 0;
+      timeToCheckGetDatePaths = maxMillis;
+      registerStop();
+    }
+  }
+
+
+  if (millis() > timeToCheckGetDateSumSizes) {
+
+    Serial.println("C1:");
+    File entry =  getDateSumSizesFile.openNextFile();
+    Serial.println("C2:");
+    if (!entry) {
+      Serial.println("C3:");
+      entry.close();
+      getDateSumSizesFile.close();
+      getDatePathsPosition++;
+      timeToCheckGetDatePaths = millis() + 2;
+      timeToCheckGetDateSumSizes = maxMillis;
+    }
+    else if (entry.isDirectory()) {
+      Serial.println("C4:");
+    } else {
+      Serial.println("C5:");
+      if ( String(entry.name()).endsWith(getDateSumSizesEndsWith)) {
+        getDateSumSizesSize += entry.size();
+        Serial.println("C6:");
+      }
+      timeToCheckGetDateSumSizes = millis();
+    }
+
+
+  }
+
+  //--------------KEEP LAST------------------------
   if (millis() > timeToCheckEthernetStop) {
     //Serial.print("7:");
     bool isStoped = client.checkStop();
@@ -251,42 +336,103 @@ void loop() {
   }
 }
 
-void splitByDelim(String delimiter, String toSplit,String outputArray[]) {
-  
+
+
+void registerGetDateSumSizes(String path, String endsWith) {
+  long sizes = 0;
+  File root = SD.open(path);
+  getDateSumSizesEndsWith = endsWith;
+  if (root) {
+    getDateSumSizesFile = root;
+    timeToCheckGetDateSumSizes = millis();
+  } else {
+    getDatePathsPosition++;
+    timeToCheckGetDatePaths = millis() + 2;
+  }
+}
+
+
+void registerGetDate() {
+  timeToCheckGetDatePaths = millis();
+
+
+}
+
+int listDir(String path, bool onlyDir, String files[50]) {
+  File root = SD.open(path);
+  int outLen = 0;
+  if (root) {
+    if (!root.isDirectory()) {
+      return outLen;
+    }
+    int i = 0;
+    while (true) {
+      File f = root.openNextFile();
+      if (! f) {
+        root.rewindDirectory();
+        break;
+      }
+      if ((onlyDir && f.isDirectory()) || !onlyDir) {
+        if (i < 50) files[i] = f.name();
+        i++;
+      }
+      f.close();
+    }
+    outLen = i;
+    root.close();
+  }
+  return outLen;
+}
+
+
+int splitByDelim(String delimiter, String toSplit, String outputArray[50]) {
+  int outlen = 0;
   size_t pos = 0;
   String token;
   int index = 0;
   while ((pos = toSplit.indexOf(delimiter)) != -1) {
-      token = toSplit.substring(0, pos);
+    token = toSplit.substring(0, pos);
     outputArray[index] = token;
-      toSplit.remove(0, pos + delimiter.length());
+    toSplit.remove(0, pos + delimiter.length());
     index++;
   }
+  outlen = index + 1;
   outputArray[index] = toSplit;
-  
-
+  return outlen;
 }
 
-int sumSizes(File dir, String startsWith, String endsWith) {
-  int sizes = 0;
-  while (true) {
 
-    File entry =  dir.openNextFile();
-    if (! entry) {
-      // no more files
-      // return to the first file in the directory
-      dir.rewindDirectory();
-      break;
-    }
+long getSize(String dir, String endsWith) {
+  File file = SD.open(dir);
+  if (file) {
+    long fileSize = file.size();
+    file.close();
+    return fileSize;
+  }
+  return 0;
+}
 
-    //Serial.print(entry.name());
-    if (entry.isDirectory()) {
-
-    } else {
-      if (String(entry.name()).startsWith(startsWith) && String(entry.name()).endsWith(endsWith)) {
-        sizes += entry.size();
+long sumSizes(String dir, String endsWith) {
+  long sizes = 0;
+  File root = SD.open(dir);
+  if (root) {
+    while (true) {
+      File entry =  root.openNextFile();
+      if (! entry) {
+        // no more files
+        // return to the first file in the directory
+        root.rewindDirectory();
+        break;
+      }
+      //Serial.print(entry.name());
+      if (entry.isDirectory()) {
+      } else {
+        if ( String(entry.name()).endsWith(endsWith)) {
+          sizes += entry.size();
+        }
       }
     }
+    root.close();
   }
   return sizes;
 }
@@ -353,10 +499,11 @@ void code200(EthernetClient client, char* filename) {
     builder += "\n";
   }
   else {
-    builder += "Content-Type: text";
+    builder += "Content-Type: text/html";
     builder += "\n";
   }
   builder += "Connection: close";
+  builder += "\n";
   builder += "\n";
   client.print(builder);
 }
@@ -421,7 +568,7 @@ void code200(EthernetClient client, char* filename, File file) {
     builder += "\n";
   }
   else {
-    builder += "Content-Type: text";
+    builder += "Content-Type: text/html";
     builder += "\n";
   }
   builder += "Connection: close";
