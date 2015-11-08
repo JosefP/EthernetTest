@@ -1,0 +1,599 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+    <title></title>
+	<meta charset="utf-8" />
+    <script src="Script/jquery.js"></script>
+    <script src="Script/globaliz.js"></script>
+    <script src="Script/dx_all.js"></script>
+    <script src="Script/jdatavie.js"></script>
+    <script src="Script/jbinary.js"></script>
+    <link href="Content/dxcommon.css" rel="stylesheet" />
+    <link href="Content/dxspa.css" rel="stylesheet" />
+
+    <link href="Content/dxlight.css" rel="stylesheet" />
+    <script> 
+        var weightconstant = 5.92;
+
+        function createYearChart() {
+            $("#drillUp").hide().unbind("click");
+            yearMonths = [[0, 8], [0, 9], [0, 10], [0, 11], [0, 12], [0 + 1, 1], [0 + 1, 2], [0 + 1, 3], [0 + 1, 4], [0 + 1, 5], [0 + 1, 6]];
+            var years = [];
+            var dateBuffer = "";
+
+           
+            for (var i in yearMonths) {
+                var val = yearMonths[i];
+                var year = val[0];
+                var month = val[1];
+                dateBuffer += pad(year, 2);
+                dateBuffer += pad(month, 2);
+                dateBuffer += '|';
+            }
+            jBinary.load('/GetYears.cshtml?' + dateBuffer).then(function (binary) {
+                
+                while (binary.view._offset + 5 <= binary.view.byteLength) {
+                    var year = binary.read("uint8");
+                    var size = binary.read("uint8") + binary.read("uint8") * 256 + binary.read("uint8") * 65536 + binary.read("uint8") * 16777216;
+                    debugger;
+                    years.push({
+                        valueDate: (2000 + year) + '/' + (2000 + year + 1),
+                        count: size * weightconstant
+                    });
+                }
+
+                chart = $("#container").dxChart({
+                    dataSource: years,
+                    zoomingMode: "all",
+                    title: "po sezónách",
+                    legend: { visible: false },
+                    tooltip: {
+                        enabled: true,
+                        format: 'decimal',
+                        customizeTooltip: function (point) {
+                            return {
+                                html: Math.round(point.value / 1000 * 100) / 100 + ' Kg<br/>' + point.argument
+                            }
+                        }
+                    },
+                    onLegendClick: function (info) {
+                        debugger;
+                    },
+                    series: {
+                        argumentField: "valueDate",
+                        valueField: "count",
+                        name: "Roky",
+                        type: "bar",
+                        color: '#ffa500',
+
+                    },
+                    argumentAxis: {
+                        label: {
+                            customizeText: function () {
+                                return this.value;
+                            }
+                        }
+                    },
+                    valueAxis: [{
+                        visible: true,
+                        label: {
+                            customizeText: function (value) {
+                                return value.value / 1000;
+                            }
+                        }
+                    }],
+                    pointClick: function (e) {
+                        var value = parseInt(e.originalArgument.split('/')[0])-2000;
+                        createMonthChart(value)
+                    }
+                });
+
+                $("#grid").dxDataGrid({
+                    dataSource: years,
+                    paging: {
+                        pageSize: 12
+                    },
+                    columns: [{
+                        dataField: "valueDate",
+                        width: 130,
+                        calculateCellValue: function (data) {
+                            return data.valueDate;
+                        },
+                        caption: "Datum"
+                    },
+                    {
+                        dataField: "count",
+                        width: 130,
+                        calculateCellValue: function (data) {
+                            return Math.round(data.count / 1000 * 100) / 100 + " Kg";
+                        },
+                        caption: "Množství"
+                    },
+                    {
+                        width: 130,
+                        calculateCellValue: function (data) {
+                            return (Math.round(data.count * 3 / 1000 * 100) / 100) + " Kč";
+                        },
+                        caption: "Cena"
+                    }]
+                });
+            });
+
+           
+        }
+
+        function createMonthChart(year1) {
+            $("#drillUp").unbind("click").bind("click", function () {
+                createYearChart();
+            }).show();
+
+            yearMonths = [[year1, 8], [year1, 9], [year1, 10], [year1, 11], [year1, 12], [year1 + 1, 1], [year1 + 1, 2], [year1 + 1, 3], [year1 + 1, 4], [year1 + 1, 5], [year1 + 1, 6]];
+            var months = [];
+            var dateBuffer = "";
+
+            for (var i in yearMonths) {
+                var val = yearMonths[i];
+                var year = val[0];
+                var month = val[1];
+                dateBuffer += pad(year, 2);
+                dateBuffer += pad(month, 2);
+                dateBuffer += '|';
+            }
+            jBinary.load('/GetMonths.cshtml?' + dateBuffer).then(function (binary) {
+                var monthCounter = 0;
+                while (binary.view._offset + 4 <= binary.view.byteLength) {
+                    var size = binary.read("uint8") + binary.read("uint8") * 256 + binary.read("uint8") * 65536 + binary.read("uint8") * 16777216;
+                    months.push({
+                        valueDate: new Date(2000 + yearMonths[monthCounter][0], yearMonths[monthCounter][1] - 1, 1, 0, 0, 0, 0).getMonth() + 1 + "." + new Date(2000 + yearMonths[monthCounter][0], yearMonths[monthCounter][1] - 1, 1, 0, 0, 0, 0).getFullYear(),
+                        count: size * weightconstant
+                    });
+                    monthCounter++;
+                }
+
+                chart = $("#container").dxChart({
+                    dataSource: months,
+                    zoomingMode: "all",
+                    title: "po měsících",
+                    legend: { visible: false },
+                    tooltip: {
+                        enabled: true,
+                        format: 'decimal',
+                        customizeTooltip: function (point) {
+                            return {
+                                html: Math.round(point.value /1000 * 100) / 100 + ' Kg<br/>' + point.argument
+                            }
+                        }
+                    },
+                    onLegendClick: function (info) {
+                        debugger;
+                    },
+                    series: {
+                        argumentField: "valueDate",
+                        valueField: "count",
+                        name: "Měsíce",
+                        type: "bar",
+                        color: '#ffa500',
+                        
+                    },
+                    argumentAxis: {
+                        label: {
+                            customizeText: function () {
+                                return this.value;
+                            }
+                        }
+                    },
+                    valueAxis: [{
+                        visible: true,
+                        label: {
+                            customizeText: function (value) {
+                                return value.value / 1000;
+                            }
+                        }
+                    }],
+                    pointClick: function (e) {
+                        var value = e.originalArgument.split('.')[0];
+                        var value1 = parseInt(e.originalArgument.split('.')[1]) - 2000;
+                        createDayChart(value1, value)
+                    }
+                });
+
+                $("#grid").dxDataGrid({
+                    dataSource: months,
+                    paging: {
+                        pageSize: 12
+                    },
+                    columns: [{
+                        dataField: "valueDate",
+                        width: 130,
+                        calculateCellValue: function (data) {
+                            return data.valueDate;
+                        },
+                        caption: "Datum"
+                    },
+                    {
+                        dataField: "count",
+                        width: 130,
+                        calculateCellValue: function (data) {
+                            return Math.round(data.count / 1000 * 100) / 100 + " Kg";
+                        },
+                        caption: "Množství"
+                    },
+                    {
+                        width: 130,
+                        calculateCellValue: function (data) {
+                            return (Math.round(data.count * 3 / 1000 * 100) / 100) + " Kč";
+                        },
+                        caption: "Cena"
+                    }]
+                });
+            });
+
+
+            
+
+        }
+       
+
+        function pad(num, size) {
+            var s = "00" + num;
+            return s.substr(s.length - size);
+        }
+        
+        function createDayChart(year, month) {
+            $("#drillUp").unbind("click").bind("click",function () {
+                createMonthChart(year);
+            }).show();
+            var days = [];
+            var daysCount = new Date(year, month, 0).getDate();
+            var dateBuffer = "";
+
+            for (var i = 1; i <= daysCount; i++) {
+                dateBuffer += pad(year, 2);
+                dateBuffer += pad(month, 2);
+                dateBuffer += pad(i, 2);
+                dateBuffer += '|';
+            }
+            jBinary.load('/GetDays.cshtml?' + dateBuffer).then(function (binary) {
+
+                var dayCounter = 1;
+                while (binary.view._offset + 2 <= binary.view.byteLength) {
+                    var size = binary.view.getInt8() + binary.view.getInt8()*256;
+                    days.push({
+                        valueDate: new Date(2000 + year, month - 1, dayCounter, 0, 0, 0, 0),
+                        count: size * weightconstant
+                    });
+                    dayCounter++;
+                }
+
+                chart = $("#container").dxChart({
+                    dataSource: days,
+                    zoomingMode: "all",
+                    legend: { visible: false },
+                    title: "po dnech",
+                    tooltip: {
+                        enabled: true,
+                        format: 'decimal',
+                        customizeTooltip: function (point) {
+                            return {
+                                html: Math.round(point.value/1000 * 100) / 100 + ' Kg<br/>' + point.argument.getDate() + '.' + (point.argument.getMonth() + 1) + '.' + point.argument.getFullYear()
+                            }
+                        }
+                    },
+                    series: {
+                        argumentField: "valueDate",
+                        valueField: "count",
+                        name: "Dny",
+                        type: "spline",
+                        color: '#ffa500'
+                    },
+                    valueAxis: [{
+                        visible: true,
+                        label: {
+                            customizeText: function (value) {
+                                return value.value / 1000;
+                            }
+                        }
+                    }],
+                    argumentAxis: {
+                        label: {
+                            customizeText: function () {
+                                return this.value.getDate() + '.' + (this.value.getMonth()+1) + '.' + this.value.getFullYear();
+                            }
+                        }
+                    },
+                    pointClick: function (e) {
+                        var value = e.originalArgument.getDate();
+                        createHourChart(year, month, value)
+                    }
+                });
+                $("#grid").dxDataGrid({
+                    dataSource: days,
+                    paging: {
+                        pageSize: 12
+                    },
+                    columns: [{
+                        dataField: "valueDate",
+                        width: 130,
+                        calculateCellValue: function (data) {
+                            return data.valueDate.getDate() + '.' + (data.valueDate.getMonth() + 1) + '.' + data.valueDate.getFullYear();;
+                        },
+                        caption: "Datum"
+                    },
+                    {
+                        dataField: "count",
+                        width: 130,
+                        calculateCellValue: function (data) {
+                            return Math.round(data.count / 1000 * 100) / 100 + " Kg";
+                        },
+                        caption: "Množství"
+                    },
+                    {
+                        width: 130,
+                        calculateCellValue: function (data) {
+                            return (Math.round(data.count * 3 / 1000 * 100) / 100)  + " Kč";
+                        },
+                        caption: "Cena"
+                    }]
+                });
+
+            });
+            
+        }
+
+        function createHourChart(year, month, day) {
+            $("#drillUp").unbind("click").bind("click", function () {
+                createDayChart(year, month);
+            }).show();
+            var hours = [];
+            jBinary.load('/Data/'+year+'/'+month+'/'+day+'-'+month+'-'+year+'.txt').then(function (binary) {
+
+                var previousDate = null;
+                var counter = weightconstant;
+                while (binary.view._offset + 2 <= binary.view.byteLength) {
+                    var date = new Date();
+                    date.setHours(binary.view.getInt8());
+                    var minutes = binary.view.getInt8();
+                    date.setMinutes(0);
+                    date.setSeconds(0);
+                    date.setMilliseconds(0);
+                    
+
+                    if (previousDate == null) {
+                        previousDate = date;
+                        continue;
+                    }
+
+                    if (previousDate.getTime() === date.getTime()) {
+                        counter = counter + weightconstant;
+                    } else {
+                        hours.push({
+                            valueDate: previousDate,
+                            count: counter
+                        });
+                        counter = weightconstant;
+                    }
+                    previousDate = date;
+                }
+                hours.push({
+                    valueDate: previousDate,
+                    count: counter
+                });
+                chart = $("#container").dxChart({
+                    dataSource: hours,
+                    zoomingMode: "all",
+                    legend: { visible: false },
+                    title: "po hodinách",
+                    tooltip: {
+                        enabled: true,
+                        format: 'decimal',
+                        customizeTooltip: function (point) {
+                            return {
+                                html: Math.round(point.value * 100) / 100 + ' g<br/>' + point.argument.toTimeString().substr(0, 8)
+                            }
+                        }
+                    },
+                    series: {
+                        argumentField: "valueDate",
+                        valueField: "count",
+                        name: "Hodiny",
+                        type: "spline",
+                        color: '#ffa500'
+                    },
+                    valueAxis: [{
+                        visible: true,
+                        label: {
+                            customizeText: function (value) {
+                                return value.value / 1000;
+                            }
+                        }
+                    }],
+                    argumentAxis: {
+                        label: {
+                            customizeText: function () {
+                                return this.value.toTimeString().substr(0, 8);
+                            }
+                        }
+                    },
+                  
+                    pointClick: function (e) {
+                        var value = e.originalArgument.getHours();
+                        createMinuteChart(year, month, day, value)
+                    }
+                });
+                $("#grid").dxDataGrid({
+                    dataSource: hours,
+                    paging: {
+                        pageSize: 12
+                    },
+                    columns: [{
+                        dataField: "valueDate",
+                        width: 130,
+                        calculateCellValue: function (data) {
+                            if (data.valueDate == undefined) {
+                                debugger;
+                            }
+                            return data.valueDate.toTimeString().substr(0, 8);
+                        },
+                        caption: "Čas"
+                    },
+                    {
+                        dataField: "count",
+                        width: 130,
+                        calculateCellValue: function (data) {
+                            return Math.round(data.count / 1000 * 100) / 100 + " Kg";
+                        },
+                        caption: "Množství"
+                    },
+                    {
+                        width: 130,
+                        calculateCellValue: function (data) {
+                            return (Math.round(data.count * 3 / 1000 * 100) / 100) + " Kč";
+                        },
+                        caption: "Cena"
+                    }]
+                });
+
+            });
+        }
+
+        function createMinuteChart(year, month, day, hour) {
+            $("#drillUp").unbind("click").bind("click", function () {
+                createHourChart(year, month, day);
+            }).show();
+            var minutes = [];
+            jBinary.load('/Data/' + year + '/' + month + '/' + day + '-' + month + '-' + year + '.txt').then(function (binary) {
+
+                var previousDate = null;
+                var counter = weightconstant;
+                while (binary.view._offset + 2 <= binary.view.byteLength) {
+                    var date = new Date();
+                    var hours = binary.view.getInt8();
+                    var minutes1 = binary.view.getInt8();
+                    if (hours != hour) {
+                        continue;
+                    }
+                    date.setHours(hours);
+                    date.setMinutes(minutes1);
+                    date.setSeconds(0);
+                    date.setMilliseconds(0);
+
+                    if (previousDate == null) {
+                        previousDate = date;
+                        continue;
+                    }
+
+                    if (previousDate.getTime() === date.getTime()) {
+                        counter = counter + weightconstant;
+                    } else {
+                        minutes.push({
+                            valueDate: previousDate,
+                            count: counter
+                        });
+                        counter = weightconstant;
+                    }
+                    previousDate = date;
+                }
+                minutes.push({
+                    valueDate: previousDate,
+                    count: counter
+                });
+                chart = $("#container").dxChart({
+                    dataSource: minutes,
+                    zoomingMode: "all",
+                    title: "po minutách",
+                    legend: { visible: false },
+                    tooltip: {
+                        enabled: true,
+                        format: 'decimal',
+                        customizeTooltip: function (point) {
+                            return {
+                                html: Math.round(point.value * 100) / 100 + ' g<br/>' + point.argument.toTimeString().substr(0, 8)
+                            }
+                        }
+                    },
+                    series: {
+                        argumentField: "valueDate",
+                        valueField: "count",
+                        name: "Minuty",
+                        type: "bar",
+                        color: '#ffa500'
+                    },
+                    valueAxis: [{
+                        visible: true,
+                        label: {
+                            customizeText: function (value) {
+                                return value.value ;
+                            }
+                        }
+                    }],
+                    argumentAxis: {
+                        label: {
+                            customizeText: function () {
+                                return this.value.toTimeString().substr(0, 8);
+                            }
+                        }
+                    }
+                    ,
+                        pointClick: function (e) {
+                            
+                        }
+                });
+                $("#grid").dxDataGrid({
+                    dataSource: minutes,
+                    paging: {
+                        pageSize: 12
+                    },
+                    columns: [{
+                        dataField: "valueDate",
+                        width: 130,
+                        calculateCellValue: function (data) {
+                            if (data.valueDate == undefined) {
+                                debugger;
+                            }
+                            return data.valueDate.toTimeString().substr(0, 8);
+                        },
+                        caption: "Čas"
+                    },
+                    {
+                        dataField: "count",
+                        width: 130,
+                        calculateCellValue: function (data) {
+                            return Math.round(data.count * 100) / 100 + " g";
+                        },
+                        caption: "Množství"
+                    },
+                    {
+                        width: 130,
+                        calculateCellValue: function (data) {
+                            return (Math.round(data.count * 0.003 * 100) / 100) + " Kč";
+                        },
+                        caption: "Cena"
+                    }]
+                });
+
+            });
+        }
+
+
+
+        $(document).ready(function () {
+            
+            //createDayChart(15, 10);
+            //createHourChart(15,10,9);
+            //createMonthChart(15);
+            createYearChart();
+
+
+
+        });
+
+
+    </script>
+</head>
+<body>
+    <div id="container"></div>
+    <div id="grid"></div>
+    <div id="button"></div>
+    <div style="background-image: url('Content/UNDO3232.png'); position: absolute; top: 5px; left: 5px; width: 32px; height: 32px; cursor:pointer;display:none;" id='drillUp'></div>
+</body>
+</html>

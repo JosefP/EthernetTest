@@ -40,9 +40,11 @@ unsigned long timeToCheckContent;
 unsigned long timeToCheckEthernet;
 unsigned long timeToCheckGetDatePaths;
 unsigned long timeToCheckGetDateSumSizes;
+unsigned long timeToCheckGetDatePathsForMonths;
+unsigned long timeToCheckGetDateSumSizesForMonths;
+unsigned long timeToCheckGetDatePathsForDays;
 
-
-String getDatePaths[200];
+String getDatePaths[100];
 int getDatePathsCount;
 int getDatePathsPosition;
 long getDateSize;
@@ -77,6 +79,9 @@ void setup() {
   timeToCheckGetDatePaths = maxMillis;
   previousYear = "";
   timeToCheckGetDateSumSizes = maxMillis;
+  timeToCheckGetDatePathsForMonths = maxMillis;
+  timeToCheckGetDateSumSizesForMonths = maxMillis;
+  timeToCheckGetDatePathsForDays = maxMillis;
 }
 
 int stopCounter = 0;
@@ -86,15 +91,23 @@ EthernetClient client;
 const uint8_t daysArray [] PROGMEM = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
 const uint8_t dowArray[] PROGMEM = { 0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4 };
 
-
+int lastFreeRam = 10000;
 
 void loop() {
 
   if (millis() > timeToCheck) {
     int missed = millis() - timeToCheck;
-    if (missed > 20) {
+    if (missed > 50) {
       Serial.print("Missed:");
       Serial.println(missed);
+     
+
+    }
+
+    if (freeRam() < lastFreeRam) {
+      Serial.print("freeMemory(MI)=");
+      Serial.println(freeRam());
+      lastFreeRam = freeRam();
     }
     timeToCheck = millis() + 10;
   }
@@ -103,7 +116,6 @@ void loop() {
   if (millis() > timeToCheckEthernet) {
     // listen for incoming clients
     if (!client || client.isStoped()) {
-      //Serial.print("CKC:");
       client = server.available();
       int milli = millis();
 
@@ -125,16 +137,14 @@ void loop() {
 
             if (strstr(filename, "GetYears.cshtml?") != 0) {
               code200(client, filename);
-              String years = String(filename).substring(String(filename).indexOf("?") + 1);
+              String years = String(filename).substring(index_of(filename,'?') + 1);
               String files[50];
               int outlen = listDir("/Data/", true, files);
               getDatePathsCount = 0;
-
               String dates[50];
               int outlenDates = splitByDelim("|", years, dates);
               for (int i = 0; i < outlen; i++) {
                 String yearDirectory = files[i];
-                Serial.println(yearDirectory);
                 long size = 0;
                 uint8_t yearDirectoryInt = yearDirectory.toInt();
                 byte bytes[] = {yearDirectoryInt};
@@ -156,21 +166,71 @@ void loop() {
 
               }
 
+                
 
+                registerGetDate();
+              
+                timeToCheckEthernet = maxMillis;
+              
 
-              registerGetDate();
-              //client.println();
-              timeToCheckEthernet = maxMillis;
               break;
             }
 
             if (strstr(filename, "GetMonths.cshtml?") != 0) {
               code200(client, filename);
+
+              String months = String(filename).substring(String(filename).indexOf("?") + 1);
+             
+              String dates[50];
+              int outlenDates = splitByDelim("|", months, dates);
+              getDatePathsCount = 0;
+              for (int j = 0; j < outlenDates; j++)
+              {
+                  String date = dates[j];
+                  if (date != "") {
+                    uint8_t year = date.substring(0, 2).toInt() ;
+                    uint8_t month = date.substring(2, 4).toInt() ;
+                    
+                    String path = "/Data/" + String(year) + "/" + String(month) + "/";
+  
+                    getDatePaths[getDatePathsCount] =  path;
+                    getDatePathsCount++;
+                  }
+              }
+
+              registerGetDateForMonths();
+              
+              timeToCheckEthernet = maxMillis;
               break;
             }
 
             if (strstr(filename, "GetDays.cshtml?") != 0) {
               code200(client, filename);
+
+              String months = String(filename).substring(String(filename).indexOf("?") + 1);
+             
+              String dates[50];
+              int outlenDates = splitByDelim("|", months, dates);
+              getDatePathsCount = 0;
+              for (int j = 0; j < outlenDates; j++)
+              {
+                  String date = dates[j];
+                  if (date != "") {
+                    uint8_t year = date.substring(0, 2).toInt() ;
+                    uint8_t month = date.substring(2, 4).toInt() ;
+                    uint8_t day = date.substring(4, 6).toInt() ;
+                    String path = "/Data/" + String(year) + "/" + String(month) + "/"+day+"-"+month+"-"+year+".TXT";
+  
+                    getDatePaths[getDatePathsCount] =  path;
+                    getDatePathsCount++;
+                    
+                  }
+                 
+              }
+              
+              registerGetDateForDays();
+              
+              timeToCheckEthernet = maxMillis;
               break;
             }
 
@@ -202,10 +262,6 @@ void loop() {
             }
           }
         }
-        // give the web browser time to receive the data
-
-        //Serial.print("5:");
-        //Serial.println(millsis() - milli);
 
       }
     }
@@ -213,43 +269,42 @@ void loop() {
   // close the connection:
 
   if (millis() > timeToCheckContent) {
-    //Serial.print("20:");
     if (contentFile.available()) {
-      //Serial.print("21:");
       unsigned char buff[512];
-      //Serial.print("22:");
       int wr = contentFile.read(buff, 512);
-      //Serial.print("23:");
       client.write(buff, wr);
-      //Serial.print("24:");
     } else {
-      //Serial.print("25:");
       contentFile.close();
-      //Serial.print("26:");
       timeToCheckContent = maxMillis;
       registerStop();
     }
   }
 
-
-  if (millis() > timeToCheckGetDatePaths) {
-    Serial.print("B1:");
-    Serial.println(getDatePathsPosition);
-    Serial.print("B2:");
-    Serial.println(getDatePathsCount);
-
+  if (millis() > timeToCheckGetDatePathsForDays) {
     if (getDatePathsPosition < getDatePathsCount) {
       String getDatePath = getDatePaths[getDatePathsPosition];
-      Serial.print("B3:");
-      Serial.println(getDatePath);
+      long getDatePathSize = getSize(getDatePath,".TXT");
+      long halfSize = getDatePathSize / 2;
+      byte bytes2[2] ;
+      bytes2[0] =  halfSize;
+      bytes2[1] =  halfSize >> 8;
+      client.write(bytes2, 2);
+      timeToCheckGetDatePathsForDays = millis();
+      getDatePathsPosition++;
+    } else {
+      getDatePathsPosition = 0;
+      timeToCheckGetDatePathsForDays = maxMillis;
+      registerStop();
+    }
+  }
+
+  if (millis() > timeToCheckGetDatePaths) {
+    if (getDatePathsPosition < getDatePathsCount) {
+      String getDatePath = getDatePaths[getDatePathsPosition];
       getDateSize += getDateSumSizesSize;
       getDateSumSizesSize = 0;
       String year = String(getDatePath).substring(0, String(getDatePath).indexOf(","));
-      Serial.print("B4:");
-      Serial.println(year);
       String path = String(getDatePath).substring(String(getDatePath).indexOf(",") + 1);
-      Serial.print("B5:");
-      Serial.println(path);
       if (previousYear != "" && year != previousYear) {
         int firstYear = String(previousYear).substring(0, String(previousYear).indexOf("/")).toInt();
         client.write(firstYear);
@@ -266,8 +321,6 @@ void loop() {
       //getDateSize = getDateSize + sumSizes(path,".TXT");
       timeToCheckGetDatePaths = maxMillis;
       registerGetDateSumSizes(path, ".TXT");
-
-
     } else {
       getDateSize += getDateSumSizesSize;
       getDateSumSizesSize = 0;
@@ -290,27 +343,81 @@ void loop() {
 
 
   if (millis() > timeToCheckGetDateSumSizes) {
-
-    Serial.println("C1:");
     File entry =  getDateSumSizesFile.openNextFile();
-    Serial.println("C2:");
     if (!entry) {
-      Serial.println("C3:");
-      entry.close();
       getDateSumSizesFile.close();
       getDatePathsPosition++;
       timeToCheckGetDatePaths = millis() + 2;
       timeToCheckGetDateSumSizes = maxMillis;
     }
     else if (entry.isDirectory()) {
-      Serial.println("C4:");
+      entry.close();
     } else {
-      Serial.println("C5:");
+      
       if ( String(entry.name()).endsWith(getDateSumSizesEndsWith)) {
         getDateSumSizesSize += entry.size();
-        Serial.println("C6:");
+        
       }
       timeToCheckGetDateSumSizes = millis();
+      entry.close();
+    }
+
+
+  }
+
+  if (millis() > timeToCheckGetDatePathsForMonths) {
+    if (getDatePathsPosition < getDatePathsCount) {
+      String getDatePath = getDatePaths[getDatePathsPosition];
+      if (getDatePathsPosition >0) {
+        getDateSize = getDateSumSizesSize;
+        long halfSize = getDateSize / 2;
+        byte bytes2[4] ;
+        bytes2[0] =  halfSize;
+        bytes2[1] =  halfSize >> 8;
+        bytes2[2] =  halfSize >> 16;
+        bytes2[3] =  halfSize >> 24;
+        client.write(bytes2, 4);
+      }
+      getDateSumSizesSize = 0;
+      String path = getDatePath;
+      timeToCheckGetDatePathsForMonths = maxMillis;
+      registerGetDateSumSizesForMonths(path, ".TXT");
+    } else {
+      getDateSize = getDateSumSizesSize;
+      getDateSumSizesSize = 0;
+      long halfSize = getDateSize / 2;
+      byte bytes2[4] ;
+      bytes2[0] =  halfSize;
+      bytes2[1] =  halfSize >> 8;
+      bytes2[2] =  halfSize >> 16;
+      bytes2[3] =  halfSize >> 24;
+      client.write(bytes2, 4);
+      getDateSize = 0;
+      previousYear = "";
+      getDatePathsPosition = 0;
+      timeToCheckGetDatePathsForMonths = maxMillis;
+      registerStop();
+    }
+  }
+
+
+  if (millis() > timeToCheckGetDateSumSizesForMonths) {
+    File entry =  getDateSumSizesFile.openNextFile();
+    if (!entry) {
+      
+      getDateSumSizesFile.close();
+      getDatePathsPosition++;
+      timeToCheckGetDatePathsForMonths = millis() + 2;
+      timeToCheckGetDateSumSizesForMonths = maxMillis;
+    }
+    else if (entry.isDirectory()) {
+      entry.close();
+    } else {
+      if ( String(entry.name()).endsWith(getDateSumSizesEndsWith)) {
+        getDateSumSizesSize += entry.size();
+      }
+      timeToCheckGetDateSumSizesForMonths = millis();
+      entry.close();
     }
 
 
@@ -318,7 +425,6 @@ void loop() {
 
   //--------------KEEP LAST------------------------
   if (millis() > timeToCheckEthernetStop) {
-    //Serial.print("7:");
     bool isStoped = client.checkStop();
     if (isStoped) {
       Serial.print("StopCounter:");
@@ -326,10 +432,7 @@ void loop() {
       // Turn off ethernet stop checking
       timeToCheckEthernetStop = maxMillis;
       timeToCheckEthernet = millis();
-      //Serial.println("client disconnected");
-      //Serial.print(timeToCheckEthernetStop);
     } else {
-      //Serial.print("9:");
       stopCounter++;
       timeToCheckEthernetStop = millis() + 1;
     }
@@ -337,6 +440,22 @@ void loop() {
 }
 
 
+int index_of(const char *string, char search) {
+    const char *moved_string = strchr(string, search);
+    /* If not null, return the difference. */
+    if (moved_string) {
+        return moved_string - string;
+    }
+    /* Character not found. */
+    return -1;
+}
+
+    int freeRam () 
+    {
+      extern int __heap_start, *__brkval; 
+      int v; 
+      return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval); 
+    }
 
 void registerGetDateSumSizes(String path, String endsWith) {
   long sizes = 0;
@@ -351,9 +470,34 @@ void registerGetDateSumSizes(String path, String endsWith) {
   }
 }
 
+void registerGetDateSumSizesForMonths(String path, String endsWith) {
+  long sizes = 0;
+  File root = SD.open(path);
+  getDateSumSizesEndsWith = endsWith;
+  if (root) {
+    getDateSumSizesFile = root;
+    timeToCheckGetDateSumSizesForMonths = millis();
+  } else {
+    getDatePathsPosition++;
+    timeToCheckGetDatePathsForMonths = millis() + 2;
+  }
+}
 
 void registerGetDate() {
   timeToCheckGetDatePaths = millis();
+
+
+}
+
+
+void registerGetDateForDays() {
+  timeToCheckGetDatePathsForDays = millis();
+
+
+}
+
+void registerGetDateForMonths() {
+  timeToCheckGetDatePathsForMonths = millis();
 
 
 }
@@ -370,6 +514,7 @@ int listDir(String path, bool onlyDir, String files[50]) {
       File f = root.openNextFile();
       if (! f) {
         root.rewindDirectory();
+        root.close();
         break;
       }
       if ((onlyDir && f.isDirectory()) || !onlyDir) {
@@ -424,7 +569,6 @@ long sumSizes(String dir, String endsWith) {
         root.rewindDirectory();
         break;
       }
-      //Serial.print(entry.name());
       if (entry.isDirectory()) {
       } else {
         if ( String(entry.name()).endsWith(endsWith)) {
@@ -520,13 +664,7 @@ void code200(EthernetClient client, char* filename, File file) {
   uint16_t minute = FAT_MINUTE(p.lastWriteTime);
   uint16_t second = FAT_SECOND(p.lastWriteTime);
 
-  //Serial.print("Before:");
-  //Serial.println(millis());
   String timeString = buildRFC822String(second, minute, hour, day, month, year);
-  //Serial.print("After:");
-  //Serial.println(millis());
-
-  //Serial.println(timeString);
 
 
   builder += "HTTP/1.1 200 OK";
