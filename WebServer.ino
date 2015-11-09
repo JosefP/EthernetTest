@@ -1,39 +1,11 @@
 
 
-/*
-  Web Server
-
-  A simple web server that shows the value of the analog input pins.
-  using an Arduino Wiznet Ethernet shield.
-
-  Circuit:
-   Ethernet shield attached to pins 10, 11, 12, 13
-   Analog inputs attached to pins A0 through A5 (optional)
-
-  created 18 Dec 2009
-  by David A. Mellis
-  modified 9 Apr 2012
-  by Tom Igoe
-
-*/
-
 #include <SPI.h>
 #include <Ethernet.h>
 #include <SD.h>
 
 
-const unsigned long maxMillis = 4294967295;
-// Enter a MAC address and IP address for your controller below.
-// The IP address will be dependent on your local network:
-byte mac[] = {
-  0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xEF
-};
-IPAddress ip(192, 168, 0, 126);
-
-// Initialize the Ethernet server library
-// with the IP address and port you want to use
-// (port 80 is default for HTTP):
-EthernetServer server(80);
+//------------ Check variables ------------------
 unsigned long timeToCheck ;
 unsigned long timeToCheckEthernetStop;
 unsigned long timeToCheckContent;
@@ -44,21 +16,43 @@ unsigned long timeToCheckGetDatePathsForMonths;
 unsigned long timeToCheckGetDateSumSizesForMonths;
 unsigned long timeToCheckGetDatePathsForDays;
 
-String getDatePaths[100];
+//------------- Working variables -----------------
+const unsigned long maxMillis = 4294967295;
+const uint8_t daysArray [] PROGMEM = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+const uint8_t dowArray[] PROGMEM = { 0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4 };
+int lastFreeRam = 10000;
+char* getDatePaths[100];
 int getDatePathsCount;
 int getDatePathsPosition;
 long getDateSize;
-String previousYear;
+char* previousYear;
 File getDateSumSizesFile;
-String getDateSumSizesEndsWith;
+char* getDateSumSizesEndsWith;
 long getDateSumSizesSize;
+int stopCounter = 0;
+File contentFile;
+EthernetClient client;
+EthernetServer server(80);
+
+//------------- Settings --------------
+byte mac[] = {
+  0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xEF
+};
+IPAddress ip(192, 168, 0, 126);
+
+char* dataFilesExtension = (char *)".TXT";
+char* dataRootDirectory = (char *)"/Data/";
+char* queryStringDelimiter = (char *)"|";
+char* pathDelimiter = (char *)"/";
+char* dateDelimiter = (char *)"-";
+char* yearPathDelimiter = (char *)",";
+
+
+
+
 
 void setup() {
-  // Open serial communications and wait for port to open:
   Serial.begin(250000);
-  while (!Serial) {
-    ; // wait for serial port to connect. Needed for Leonardo only
-  }
 
   digitalWrite(10, HIGH);
   if (!SD.begin(4)) {
@@ -72,259 +66,320 @@ void setup() {
   Serial.print("server is at ");
   Serial.println(Ethernet.localIP());
 
-  timeToCheck = millis();
-  timeToCheckEthernet = millis();
-  timeToCheckEthernetStop = maxMillis;
-  timeToCheckContent = maxMillis;
-  timeToCheckGetDatePaths = maxMillis;
-  previousYear = "";
-  timeToCheckGetDateSumSizes = maxMillis;
-  timeToCheckGetDatePathsForMonths = maxMillis;
-  timeToCheckGetDateSumSizesForMonths = maxMillis;
-  timeToCheckGetDatePathsForDays = maxMillis;
+  planCheckImmediately(timeToCheck);
+  planCheckImmediately(timeToCheckEthernet);
+  disableCheck(timeToCheckEthernetStop);
+  disableCheck(timeToCheckContent);
+  disableCheck(timeToCheckGetDatePaths);
+  strcpy (previousYear, "");
+  disableCheck(timeToCheckGetDateSumSizes);
+  disableCheck(timeToCheckGetDatePathsForMonths);
+  disableCheck(timeToCheckGetDateSumSizesForMonths);
+  disableCheck(timeToCheckGetDatePathsForDays);
+
 }
 
-int stopCounter = 0;
-File contentFile;
-EthernetClient client;
 
-const uint8_t daysArray [] PROGMEM = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
-const uint8_t dowArray[] PROGMEM = { 0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4 };
-
-int lastFreeRam = 10000;
 
 void loop() {
-
-  if (millis() > timeToCheck) {
-    int missed = millis() - timeToCheck;
-    if (missed > 50) {
-      Serial.print("Missed:");
-      Serial.println(missed);
-     
-
-    }
-
-    if (freeRam() < lastFreeRam) {
-      Serial.print("freeMemory(MI)=");
-      Serial.println(freeRam());
-      lastFreeRam = freeRam();
-    }
-    timeToCheck = millis() + 10;
+  if (hasToCheck(timeToCheck)) {
+    check();
   }
 
+  if (hasToCheck(timeToCheckEthernet)) {
+    checkEthernet(client);
+  }
 
-  if (millis() > timeToCheckEthernet) {
-    // listen for incoming clients
-    if (!client || client.isStoped()) {
-      client = server.available();
-      int milli = millis();
+  if (hasToCheck(timeToCheckContent)) {
+    checkContent(client);
+  }
 
-      if (client) {
-        //Serial.println("new client");
-        // an http request ends with a blank line
-        boolean currentLineIsBlank = true;
-        while (client.connected()) {
-          if (client.available()) {
-            milli = millis();
-            int size = client.available();
-            unsigned char buff[size];
-            int r = client.read(buff, size);
-            char* filename = processFile((char*)buff);
-            Serial.print("Requested: ");
-            Serial.println(filename);
+  if (hasToCheck(timeToCheckGetDatePathsForDays)) {
+    checkGetDatePathsForDays(client);
+  }
 
-            //GetYears.cshtml?0008|0009|0010|0011|0012|0101|0102|0103|0104|0105|0106|
+  if (hasToCheck(timeToCheckGetDatePaths)) {
+    checkGetDatePaths(client);
+  }
 
-            if (strstr(filename, "GetYears.cshtml?") != 0) {
-              code200(client, filename);
-              String years = String(filename).substring(index_of(filename,'?') + 1);
-              String files[50];
-              int outlen = listDir("/Data/", true, files);
-              getDatePathsCount = 0;
-              String dates[50];
-              int outlenDates = splitByDelim("|", years, dates);
-              for (int i = 0; i < outlen; i++) {
-                String yearDirectory = files[i];
-                long size = 0;
-                uint8_t yearDirectoryInt = yearDirectory.toInt();
-                byte bytes[] = {yearDirectoryInt};
+  if (hasToCheck(timeToCheckGetDateSumSizes)) {
+    checkGetDateSumSizes(client);
+  }
 
-                for (int j = 0; j < outlenDates; j++)
-                {
+  if (hasToCheck(timeToCheckGetDatePathsForMonths)) {
+    checkGetDatePathsForMonths(client);
+  }
 
-                  String date = dates[j];
-                  if (date != "") {
-                    uint8_t year = date.substring(0, 2).toInt() + yearDirectoryInt;
-                    uint8_t month = date.substring(2, 4).toInt() ;
+  if (hasToCheck(timeToCheckGetDateSumSizesForMonths)) {
+    checkGetDateSumSizesForMonths(client);
+  }
 
-                    String filePath = "/Data/" + String(year) + "/" + String(month) + "/";
-                    getDatePaths[getDatePathsCount] = String(yearDirectoryInt)+"/"+String(yearDirectoryInt+1) + "," + filePath;
-                    getDatePathsCount++;
+  //--------------KEEP LAST------------------------
+  if (hasToCheck(timeToCheckEthernetStop)) {
+    checkEthernetStop(client);
+  }
+}
 
-                  }
-                }
+//---------------------- Process methods ----------------------
 
-              }
+void processSDFile(EthernetClient client, char* filename) {
+  File webFile = SD.open(filename);
+  if (webFile) {
+    Serial.println("Exist");
+    code200(client, filename, webFile);
+    registerContent(webFile);
+  } else {
+    Serial.println("Doesnt exist");
+    if (strlen(filename) < 2) {
+      File webFile = SD.open("index.htm");
+      if (webFile) {
+        registerContent(webFile);
+      } else {
+        code404(client);
+        registerStop();
+      }
+    } else {
+      code404(client);
+      registerStop();
+    }
+  }
+}
 
-                
+void processGetDays(EthernetClient client, char* filename) {
+  code200(client, filename);
 
-                registerGetDate();
-              
-                timeToCheckEthernet = maxMillis;
-              
+  char* parts[2];
+  splitByDelim("?", filename, parts);
+  char* months = parts[1];
+  char* dates[50];
+  int outlenDates = splitByDelim(queryStringDelimiter, months, dates);
 
-              break;
-            }
+  getDatePathsCount = 0;
+  for (int j = 0; j < outlenDates; j++)
+  {
+    char* date = dates[j];
 
-            if (strstr(filename, "GetMonths.cshtml?") != 0) {
-              code200(client, filename);
+    if (date != "") {
+      char subBuffer [3];
+      uint8_t year = atoi(subString(date, 0, 2, subBuffer)) ;
+      uint8_t month = atoi(subString(date, 2, 2, subBuffer)) ;
+      uint8_t day = atoi(subString(date, 4, 2, subBuffer)) ;
 
-              String months = String(filename).substring(String(filename).indexOf("?") + 1);
-             
-              String dates[50];
-              int outlenDates = splitByDelim("|", months, dates);
-              getDatePathsCount = 0;
-              for (int j = 0; j < outlenDates; j++)
-              {
-                  String date = dates[j];
-                  if (date != "") {
-                    uint8_t year = date.substring(0, 2).toInt() ;
-                    uint8_t month = date.substring(2, 4).toInt() ;
-                    
-                    String path = "/Data/" + String(year) + "/" + String(month) + "/";
-  
-                    getDatePaths[getDatePathsCount] =  path;
-                    getDatePathsCount++;
-                  }
-              }
+      char path[24];
+      char buffer [2];
+      strcpy( path, dataRootDirectory );
+      strcat( path, itoa(year, buffer, 10) );
+      strcat( path, pathDelimiter );
+      strcat( path, itoa(month, buffer, 10) );
+      strcat( path,  pathDelimiter );
+      strcat( path, itoa(day, buffer, 10) );
+      strcat( path, dateDelimiter );
+      strcat( path, itoa(month, buffer, 10) );
+      strcat( path, dateDelimiter );
+      strcat( path, itoa(year, buffer, 10) );
+      strcat( path, dataFilesExtension );
 
-              registerGetDateForMonths();
-              
-              timeToCheckEthernet = maxMillis;
-              break;
-            }
+      getDatePaths[getDatePathsCount] =  path;
+      getDatePathsCount++;
 
-            if (strstr(filename, "GetDays.cshtml?") != 0) {
-              code200(client, filename);
+    }
 
-              String months = String(filename).substring(String(filename).indexOf("?") + 1);
-             
-              String dates[50];
-              int outlenDates = splitByDelim("|", months, dates);
-              getDatePathsCount = 0;
-              for (int j = 0; j < outlenDates; j++)
-              {
-                  String date = dates[j];
-                  if (date != "") {
-                    uint8_t year = date.substring(0, 2).toInt() ;
-                    uint8_t month = date.substring(2, 4).toInt() ;
-                    uint8_t day = date.substring(4, 6).toInt() ;
-                    String path = "/Data/" + String(year) + "/" + String(month) + "/"+day+"-"+month+"-"+year+".TXT";
-  
-                    getDatePaths[getDatePathsCount] =  path;
-                    getDatePathsCount++;
-                    
-                  }
-                 
-              }
-              
-              registerGetDateForDays();
-              
-              timeToCheckEthernet = maxMillis;
-              break;
-            }
+  }
+  registerGetDateForDays();
 
 
+  disableCheck(timeToCheckEthernet);
+}
+
+void processGetMonths(EthernetClient client, char* filename) {
+  code200(client, filename);
+
+  char* parts[2];
+  splitByDelim("?", filename, parts);
+  char* months = parts[1];
+  char* dates[50];
+  int outlenDates = splitByDelim(queryStringDelimiter, months, dates);
+  getDatePathsCount = 0;
+  for (int j = 0; j < outlenDates; j++)
+  {
+    char* date = dates[j];
+    if (date != "") {
+      char subBuffer [3];
+      uint8_t year = atoi(subString(date, 0, 2, subBuffer)) ;
+      uint8_t month = atoi(subString(date, 2, 2, subBuffer)) ;
+
+      char path[12];
+      char buffer [2];
+      strcpy( path, dataRootDirectory );
+      strcat( path, itoa(year, buffer, 10) );
+      strcat( path, pathDelimiter );
+      strcat( path, itoa(month, buffer, 10) );
+      strcat( path,  pathDelimiter );
+
+      getDatePaths[getDatePathsCount] =  path;
+      getDatePathsCount++;
+    }
+  }
+
+  registerGetDateForMonths();
+
+  disableCheck(timeToCheckEthernet);
+}
+
+void processGetYears(EthernetClient client, char* filename) {
+  code200(client, filename);
+  char* parts[2];
+  splitByDelim("?", filename, parts);
+  char* years = parts[1];
+  char* dates[50];
+  int outlenDates = splitByDelim(queryStringDelimiter, years, dates);
+
+  char* files[50];
+  int outlen = listDir(dataRootDirectory, true, files);
+  getDatePathsCount = 0;
+
+  for (int i = 0; i < outlen; i++) {
+    char* yearDirectory = files[i];
+    long size = 0;
+    uint8_t yearDirectoryInt = atoi(yearDirectory);
+    byte bytes[] = {yearDirectoryInt};
+
+    for (int j = 0; j < outlenDates; j++)
+    {
+
+      char* date = dates[j];
+      if (date != "") {
+        char subBuffer [3];
+        uint8_t year = atoi(subString(date, 0, 2, subBuffer)) + yearDirectoryInt;
+        uint8_t month = atoi(subString(date, 2, 2, subBuffer)) ;
+
+        char filePath[18];
+        char buffer [2];
+        strcpy( filePath, itoa(yearDirectoryInt, buffer, 10) );
+        strcat( filePath, pathDelimiter );
+        strcat( filePath, itoa(yearDirectoryInt + 1, buffer, 10) );
+        strcat( filePath, yearPathDelimiter );
+        strcat( filePath, dataRootDirectory );
+        strcat( filePath, itoa(year, buffer, 10) );
+        strcat( filePath, pathDelimiter );
+        strcat( filePath, itoa(month, buffer, 10) );
+        strcat( filePath,  pathDelimiter );
+
+        getDatePaths[getDatePathsCount] = filePath;
+        getDatePathsCount++;
+
+      }
+    }
+  }
+
+  registerGetDate();
+  disableCheck(timeToCheckEthernet);
+}
 
 
-            File webFile = SD.open(filename);
-            if (webFile) {
-              Serial.println("Exist");
-              code200(client, filename, webFile);
-              registerContent(webFile);
-              break;
-            } else {
-              Serial.println("Doesnt exist");
-              if (strlen(filename) < 2) {
-                File webFile = SD.open("index.htm");
-                if (webFile) {
-                  registerContent(webFile);
-                } else {
-                  code404(client);
-                  registerStop();
-                  break;
-                }
-              } else {
-                code404(client);
-                registerStop();
-                break;
-              }
-            }
+//---------------- Check methods -------------
+void check() {
+  int missed = millis() - timeToCheck;
+  if (missed > 50) {
+    Serial.print("Missed:");
+    Serial.println(missed);
+  }
+
+  if (freeRam() < lastFreeRam) {
+    Serial.print("freeMemory(MI)=");
+    Serial.println(freeRam());
+    lastFreeRam = freeRam();
+  }
+  planCheck(timeToCheck, 10);
+}
+
+void checkEthernet(EthernetClient client) {
+  // listen for incoming clients
+  if (!client || client.isStoped()) {
+    client = server.available();
+    int milli = millis();
+
+    if (client) {
+      boolean currentLineIsBlank = true;
+      while (client.connected()) {
+        if (client.available()) {
+          milli = millis();
+          int size = client.available();
+          unsigned char buff[size];
+          int r = client.read(buff, size);
+          char* filename = processFile((char*)buff);
+          Serial.print("Requested: ");
+          Serial.println(filename);
+
+          //GetYears.cshtml?0008|0009|0010|0011|0012|0101|0102|0103|0104|0105|0106|
+
+          if (strstr(filename, "GetYears.cshtml?") != 0) {
+            processGetYears(client, filename);
+            break;
           }
+
+          if (strstr(filename, "GetMonths.cshtml?") != 0) {
+            processGetMonths(client, filename);
+            break;
+          }
+
+          if (strstr(filename, "GetDays.cshtml?") != 0) {
+            processGetDays(client, filename);
+            break;
+          }
+
+          processSDFile(client, filename);
+          break;
         }
-
       }
     }
   }
-  // close the connection:
+}
 
-  if (millis() > timeToCheckContent) {
-    if (contentFile.available()) {
-      unsigned char buff[512];
-      int wr = contentFile.read(buff, 512);
-      client.write(buff, wr);
-    } else {
-      contentFile.close();
-      timeToCheckContent = maxMillis;
-      registerStop();
-    }
+void checkContent(EthernetClient client) {
+  if (contentFile.available()) {
+    unsigned char buff[512];
+    int wr = contentFile.read(buff, 512);
+    client.write(buff, wr);
+  } else {
+    contentFile.close();
+    disableCheck(timeToCheckContent);
+    registerStop();
   }
+}
 
-  if (millis() > timeToCheckGetDatePathsForDays) {
-    if (getDatePathsPosition < getDatePathsCount) {
-      String getDatePath = getDatePaths[getDatePathsPosition];
-      long getDatePathSize = getSize(getDatePath,".TXT");
-      long halfSize = getDatePathSize / 2;
-      byte bytes2[2] ;
-      bytes2[0] =  halfSize;
-      bytes2[1] =  halfSize >> 8;
-      client.write(bytes2, 2);
-      timeToCheckGetDatePathsForDays = millis();
-      getDatePathsPosition++;
-    } else {
-      getDatePathsPosition = 0;
-      timeToCheckGetDatePathsForDays = maxMillis;
-      registerStop();
-    }
+void checkGetDatePathsForDays(EthernetClient client) {
+  if (getDatePathsPosition < getDatePathsCount) {
+    char* getDatePath = getDatePaths[getDatePathsPosition];
+    long getDatePathSize = getSize(getDatePath, dataFilesExtension);
+    long halfSize = getDatePathSize / 2;
+    byte bytes2[2] ;
+    bytes2[0] =  halfSize;
+    bytes2[1] =  halfSize >> 8;
+    client.write(bytes2, 2);
+    planCheckImmediately(timeToCheckGetDatePathsForDays);
+    getDatePathsPosition++;
+  } else {
+    getDatePathsPosition = 0;
+    disableCheck(timeToCheckGetDatePathsForDays);
+    registerStop();
   }
+}
 
-  if (millis() > timeToCheckGetDatePaths) {
-    if (getDatePathsPosition < getDatePathsCount) {
-      String getDatePath = getDatePaths[getDatePathsPosition];
-      getDateSize += getDateSumSizesSize;
-      getDateSumSizesSize = 0;
-      String year = String(getDatePath).substring(0, String(getDatePath).indexOf(","));
-      String path = String(getDatePath).substring(String(getDatePath).indexOf(",") + 1);
-      if (previousYear != "" && year != previousYear) {
-        int firstYear = String(previousYear).substring(0, String(previousYear).indexOf("/")).toInt();
-        client.write(firstYear);
-        long halfSize = getDateSize / 2;
-        byte bytes2[4] ;
-        bytes2[0] =  halfSize;
-        bytes2[1] =  halfSize >> 8;
-        bytes2[2] =  halfSize >> 16;
-        bytes2[3] =  halfSize >> 24;
-        client.write(bytes2, 4);
-        getDateSize = 0;
-      }
-      previousYear = year;
-      //getDateSize = getDateSize + sumSizes(path,".TXT");
-      timeToCheckGetDatePaths = maxMillis;
-      registerGetDateSumSizes(path, ".TXT");
-    } else {
-      getDateSize += getDateSumSizesSize;
-      getDateSumSizesSize = 0;
-      int firstYear = String(previousYear).substring(0, String(previousYear).indexOf("/")).toInt();
+void checkGetDatePaths(EthernetClient client) {
+  if (getDatePathsPosition < getDatePathsCount) {
+    char* getDatePath = getDatePaths[getDatePathsPosition];
+    getDateSize += getDateSumSizesSize;
+    getDateSumSizesSize = 0;
+    char* parts[2];
+    splitByDelim(yearPathDelimiter, getDatePath, parts);
+    char* months = parts[1];
+
+    char* year = parts[0];
+    char* path = parts[1];
+    if (previousYear != "" && year != previousYear) {
+      splitByDelim(pathDelimiter, previousYear, parts);
+      int firstYear = atoi(parts[0]);
       client.write(firstYear);
       long halfSize = getDateSize / 2;
       byte bytes2[4] ;
@@ -334,57 +389,59 @@ void loop() {
       bytes2[3] =  halfSize >> 24;
       client.write(bytes2, 4);
       getDateSize = 0;
-      previousYear = "";
-      getDatePathsPosition = 0;
-      timeToCheckGetDatePaths = maxMillis;
-      registerStop();
     }
+    previousYear = year;
+
+    disableCheck(timeToCheckGetDatePaths);
+    registerGetDateSumSizes(path, dataFilesExtension);
+  } else {
+    getDateSize += getDateSumSizesSize;
+    getDateSumSizesSize = 0;
+    char* parts[2];
+    splitByDelim(pathDelimiter, previousYear, parts);
+    int firstYear = atoi(parts[0]);
+    client.write(firstYear);
+    long halfSize = getDateSize / 2;
+    byte bytes2[4] ;
+    bytes2[0] =  halfSize;
+    bytes2[1] =  halfSize >> 8;
+    bytes2[2] =  halfSize >> 16;
+    bytes2[3] =  halfSize >> 24;
+    client.write(bytes2, 4);
+    getDateSize = 0;
+    strcpy (previousYear, "");
+    getDatePathsPosition = 0;
+    disableCheck(timeToCheckGetDatePaths);
+    registerStop();
   }
+}
 
-
-  if (millis() > timeToCheckGetDateSumSizes) {
-    File entry =  getDateSumSizesFile.openNextFile();
-    if (!entry) {
-      getDateSumSizesFile.close();
-      getDatePathsPosition++;
-      timeToCheckGetDatePaths = millis() + 2;
-      timeToCheckGetDateSumSizes = maxMillis;
-    }
-    else if (entry.isDirectory()) {
-      entry.close();
-    } else {
-      
-      if ( String(entry.name()).endsWith(getDateSumSizesEndsWith)) {
-        getDateSumSizesSize += entry.size();
-        
-      }
-      timeToCheckGetDateSumSizes = millis();
-      entry.close();
-    }
-
-
+void checkGetDateSumSizes(EthernetClient client) {
+  File entry =  getDateSumSizesFile.openNextFile();
+  if (!entry) {
+    getDateSumSizesFile.close();
+    getDatePathsPosition++;
+    planCheck(timeToCheckGetDatePaths, 2);
+    disableCheck(timeToCheckGetDateSumSizes);
   }
+  else if (entry.isDirectory()) {
+    entry.close();
+  } else {
 
-  if (millis() > timeToCheckGetDatePathsForMonths) {
-    if (getDatePathsPosition < getDatePathsCount) {
-      String getDatePath = getDatePaths[getDatePathsPosition];
-      if (getDatePathsPosition >0) {
-        getDateSize = getDateSumSizesSize;
-        long halfSize = getDateSize / 2;
-        byte bytes2[4] ;
-        bytes2[0] =  halfSize;
-        bytes2[1] =  halfSize >> 8;
-        bytes2[2] =  halfSize >> 16;
-        bytes2[3] =  halfSize >> 24;
-        client.write(bytes2, 4);
-      }
-      getDateSumSizesSize = 0;
-      String path = getDatePath;
-      timeToCheckGetDatePathsForMonths = maxMillis;
-      registerGetDateSumSizesForMonths(path, ".TXT");
-    } else {
+    if ( endsWith(entry.name(), getDateSumSizesEndsWith)) {
+      getDateSumSizesSize += entry.size();
+
+    }
+    planCheckImmediately(timeToCheckGetDateSumSizes);
+    entry.close();
+  }
+}
+
+void checkGetDatePathsForMonths(EthernetClient client) {
+  if (getDatePathsPosition < getDatePathsCount) {
+    char* getDatePath = getDatePaths[getDatePathsPosition];
+    if (getDatePathsPosition > 0) {
       getDateSize = getDateSumSizesSize;
-      getDateSumSizesSize = 0;
       long halfSize = getDateSize / 2;
       byte bytes2[4] ;
       bytes2[0] =  halfSize;
@@ -392,117 +449,138 @@ void loop() {
       bytes2[2] =  halfSize >> 16;
       bytes2[3] =  halfSize >> 24;
       client.write(bytes2, 4);
-      getDateSize = 0;
-      previousYear = "";
-      getDatePathsPosition = 0;
-      timeToCheckGetDatePathsForMonths = maxMillis;
-      registerStop();
     }
+    getDateSumSizesSize = 0;
+    char* path = getDatePath;
+    disableCheck(timeToCheckGetDatePathsForMonths);
+    registerGetDateSumSizesForMonths(path, dataFilesExtension);
+  } else {
+    getDateSize = getDateSumSizesSize;
+    getDateSumSizesSize = 0;
+    long halfSize = getDateSize / 2;
+    byte bytes2[4] ;
+    bytes2[0] =  halfSize;
+    bytes2[1] =  halfSize >> 8;
+    bytes2[2] =  halfSize >> 16;
+    bytes2[3] =  halfSize >> 24;
+    client.write(bytes2, 4);
+    getDateSize = 0;
+    strcpy (previousYear, "");
+    getDatePathsPosition = 0;
+    disableCheck(timeToCheckGetDatePathsForMonths);
+    registerStop();
   }
+}
 
+void checkGetDateSumSizesForMonths(EthernetClient client) {
+  File entry =  getDateSumSizesFile.openNextFile();
+  if (!entry) {
 
-  if (millis() > timeToCheckGetDateSumSizesForMonths) {
-    File entry =  getDateSumSizesFile.openNextFile();
-    if (!entry) {
-      
-      getDateSumSizesFile.close();
-      getDatePathsPosition++;
-      timeToCheckGetDatePathsForMonths = millis() + 2;
-      timeToCheckGetDateSumSizesForMonths = maxMillis;
-    }
-    else if (entry.isDirectory()) {
-      entry.close();
-    } else {
-      if ( String(entry.name()).endsWith(getDateSumSizesEndsWith)) {
-        getDateSumSizesSize += entry.size();
-      }
-      timeToCheckGetDateSumSizesForMonths = millis();
-      entry.close();
-    }
-
-
+    getDateSumSizesFile.close();
+    getDatePathsPosition++;
+    planCheck(timeToCheckGetDatePathsForMonths, 2);
+    disableCheck(timeToCheckGetDateSumSizesForMonths);
   }
-
-  //--------------KEEP LAST------------------------
-  if (millis() > timeToCheckEthernetStop) {
-    bool isStoped = client.checkStop();
-    if (isStoped) {
-      Serial.print("StopCounter:");
-      Serial.println(stopCounter);
-      // Turn off ethernet stop checking
-      timeToCheckEthernetStop = maxMillis;
-      timeToCheckEthernet = millis();
-    } else {
-      stopCounter++;
-      timeToCheckEthernetStop = millis() + 1;
+  else if (entry.isDirectory()) {
+    entry.close();
+  } else {
+    if ( endsWith(entry.name(), getDateSumSizesEndsWith)) {
+      getDateSumSizesSize += entry.size();
     }
+    planCheckImmediately(timeToCheckGetDateSumSizesForMonths);
+    entry.close();
+  }
+}
+
+void checkEthernetStop(EthernetClient client) {
+  bool isStoped = client.checkStop();
+  if (isStoped) {
+    Serial.print("StopCounter:");
+    Serial.println(stopCounter);
+    // Turn off ethernet stop checking
+    disableCheck(timeToCheckEthernetStop);
+    planCheckImmediately(timeToCheckEthernet);
+  } else {
+    stopCounter++;
+    planCheck(timeToCheckEthernetStop, 1);
   }
 }
 
 
-int index_of(const char *string, char search) {
-    const char *moved_string = strchr(string, search);
-    /* If not null, return the difference. */
-    if (moved_string) {
-        return moved_string - string;
-    }
-    /* Character not found. */
-    return -1;
-}
-
-    int freeRam () 
-    {
-      extern int __heap_start, *__brkval; 
-      int v; 
-      return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval); 
-    }
-
-void registerGetDateSumSizes(String path, String endsWith) {
+//---------------------- Register methods ----------------------
+void registerGetDateSumSizes(char* path, char* endsWith) {
   long sizes = 0;
   File root = SD.open(path);
   getDateSumSizesEndsWith = endsWith;
   if (root) {
     getDateSumSizesFile = root;
-    timeToCheckGetDateSumSizes = millis();
+    planCheckImmediately(timeToCheckGetDateSumSizes);
   } else {
     getDatePathsPosition++;
-    timeToCheckGetDatePaths = millis() + 2;
+    planCheck(timeToCheckGetDatePaths, 2);
   }
 }
 
-void registerGetDateSumSizesForMonths(String path, String endsWith) {
+void registerGetDateSumSizesForMonths(char* path, char* endsWith) {
   long sizes = 0;
   File root = SD.open(path);
   getDateSumSizesEndsWith = endsWith;
   if (root) {
     getDateSumSizesFile = root;
-    timeToCheckGetDateSumSizesForMonths = millis();
+    planCheckImmediately(timeToCheckGetDateSumSizesForMonths);
   } else {
     getDatePathsPosition++;
-    timeToCheckGetDatePathsForMonths = millis() + 2;
+    planCheck(timeToCheckGetDatePathsForMonths, 2);
   }
 }
 
 void registerGetDate() {
-  timeToCheckGetDatePaths = millis();
-
-
+  planCheckImmediately(timeToCheckGetDatePaths);
 }
 
 
 void registerGetDateForDays() {
-  timeToCheckGetDatePathsForDays = millis();
-
-
+  planCheck(timeToCheckGetDatePathsForDays, 1);
 }
 
 void registerGetDateForMonths() {
-  timeToCheckGetDatePathsForMonths = millis();
-
-
+  planCheck(timeToCheckGetDatePathsForMonths, 1);
 }
 
-int listDir(String path, bool onlyDir, String files[50]) {
+void registerStop() {
+  stopCounter = 0;
+  client.beginStop();
+  planCheckImmediately(timeToCheckEthernetStop);
+}
+
+
+void registerContent(File content) {
+  contentFile = content;
+  disableCheck(timeToCheckEthernet);
+  planCheckImmediately(timeToCheckContent);
+}
+
+//------------------ Help methods ----------------------
+
+
+bool hasToCheck(unsigned long checkVariable) {
+  return millis() > checkVariable;
+}
+
+void planCheckImmediately(unsigned long checkVariable) {
+  checkVariable = millis();
+}
+
+void planCheck(unsigned long checkVariable, int checkAfterMillis) {
+  checkVariable = millis() + checkAfterMillis;
+}
+
+void disableCheck(unsigned long checkVariable) {
+  checkVariable = maxMillis;
+}
+
+
+int listDir(char* path, bool onlyDir, char* files[50]) {
   File root = SD.open(path);
   int outLen = 0;
   if (root) {
@@ -530,24 +608,8 @@ int listDir(String path, bool onlyDir, String files[50]) {
 }
 
 
-int splitByDelim(String delimiter, String toSplit, String outputArray[50]) {
-  int outlen = 0;
-  size_t pos = 0;
-  String token;
-  int index = 0;
-  while ((pos = toSplit.indexOf(delimiter)) != -1) {
-    token = toSplit.substring(0, pos);
-    outputArray[index] = token;
-    toSplit.remove(0, pos + delimiter.length());
-    index++;
-  }
-  outlen = index + 1;
-  outputArray[index] = toSplit;
-  return outlen;
-}
 
-
-long getSize(String dir, String endsWith) {
+long getSize(char* dir, char* endsWith) {
   File file = SD.open(dir);
   if (file) {
     long fileSize = file.size();
@@ -557,7 +619,7 @@ long getSize(String dir, String endsWith) {
   return 0;
 }
 
-long sumSizes(String dir, String endsWith) {
+long sumSizes(char* dir, char* endsWithValue) {
   long sizes = 0;
   File root = SD.open(dir);
   if (root) {
@@ -571,7 +633,7 @@ long sumSizes(String dir, String endsWith) {
       }
       if (entry.isDirectory()) {
       } else {
-        if ( String(entry.name()).endsWith(endsWith)) {
+        if ( endsWith(entry.name(), endsWithValue)) {
           sizes += entry.size();
         }
       }
@@ -581,18 +643,7 @@ long sumSizes(String dir, String endsWith) {
   return sizes;
 }
 
-void registerStop() {
-  stopCounter = 0;
-  client.beginStop();
-  timeToCheckEthernetStop = millis();
-}
 
-
-void registerContent(File content) {
-  contentFile = content;
-  timeToCheckEthernet = maxMillis;
-  timeToCheckContent = millis();
-}
 
 void code304(EthernetClient client) {
   client.println("HTTP/1.1 304 Not Modified");
@@ -601,60 +652,59 @@ void code304(EthernetClient client) {
 }
 
 void code200(EthernetClient client, char* filename) {
-  String builder = "";
+  char*  builder;
 
-
-  builder += "HTTP/1.1 200 OK";
-  builder += "\n";
+  strcpy( builder, "HTTP/1.1 200 OK");
+  strcat( builder, "\n");
   if (strstr(filename, ".htm") != 0) {
-    builder += "Content-Type: text/html";
-    builder += "\n";
+    strcat( builder, "Content-Type: text/html");
+    strcat( builder, "\n");
   }
   else if (strstr(filename, ".css") != 0) {
-    builder += "Content-Type: text/css";
-    builder += "\n";
+    strcat( builder, "Content-Type: text/css");
+    strcat( builder, "\n");
   }
   else if (strstr(filename, ".png") != 0) {
-    builder += "Content-Type: image/png";
-    builder += "\n";
+    strcat( builder, "Content-Type: image/png");
+    strcat( builder, "\n");
   }
   else if (strstr(filename, ".jpg") != 0) {
-    builder += "Content-Type: image/jpeg";
-    builder += "\n";
+    strcat( builder, "Content-Type: image/jpeg");
+    strcat( builder, "\n");
   }
   else if (strstr(filename, ".gif") != 0) {
-    builder += "Content-Type: image/gif";
-    builder += "\n";
+    strcat( builder, "Content-Type: image/gif");
+    strcat( builder, "\n");
   }
   else if (strstr(filename, ".3gp") != 0) {
-    builder += "Content-Type: video/mpeg";
-    builder += "\n";
+    strcat( builder, "Content-Type: video/mpeg");
+    strcat( builder, "\n");
   }
   else if (strstr(filename, ".pdf") != 0) {
-    builder += "Content-Type: application/pdf";
-    builder += "\n";
+    strcat( builder, "Content-Type: application/pdf");
+    strcat( builder, "\n");
   }
   else if (strstr(filename, ".js") != 0) {
-    builder += "Content-Type: application/x-javascript";
-    builder += "\n";
+    strcat( builder, "Content-Type: application/x-javascript");
+    strcat( builder, "\n");
   }
   else if (strstr(filename, ".xml") != 0) {
-    builder += "Content-Type: application/xml";
-    builder += "\n";
+    strcat( builder, "Content-Type: application/xml");
+    strcat( builder, "\n");
   }
   else {
-    builder += "Content-Type: text/html";
-    builder += "\n";
+    strcat( builder, "Content-Type: text/html");
+    strcat( builder, "\n");
   }
-  builder += "Connection: close";
-  builder += "\n";
-  builder += "\n";
+  strcat( builder, "Connection: close");
+  strcat( builder, "\n");
+  strcat( builder, "\n");
   client.print(builder);
 }
 
 
 void code200(EthernetClient client, char* filename, File file) {
-  String builder = "";
+  char*  builder;
   dir_t p;
   file.dirEntry(&p);
   uint16_t year = FAT_YEAR(p.lastWriteDate);
@@ -664,56 +714,57 @@ void code200(EthernetClient client, char* filename, File file) {
   uint16_t minute = FAT_MINUTE(p.lastWriteTime);
   uint16_t second = FAT_SECOND(p.lastWriteTime);
 
-  String timeString = buildRFC822String(second, minute, hour, day, month, year);
+  char* timeString = buildRFC822String(second, minute, hour, day, month, year);
 
 
-  builder += "HTTP/1.1 200 OK";
-  builder += "\n";
+  strcpy( builder, "HTTP/1.1 200 OK");
+  strcat( builder, "\n");
   if (strstr(filename, ".htm") != 0) {
-    builder += "Content-Type: text/html";
-    builder += "\n";
+    strcat( builder, "Content-Type: text/html");
+    strcat( builder, "\n");
   }
   else if (strstr(filename, ".css") != 0) {
-    builder += "Content-Type: text/css";
-    builder += "\n";
+    strcat( builder, "Content-Type: text/css");
+    strcat( builder, "\n");
   }
   else if (strstr(filename, ".png") != 0) {
-    builder += "Content-Type: image/png";
-    builder += "\n";
+    strcat( builder, "Content-Type: image/png");
+    strcat( builder, "\n");
   }
   else if (strstr(filename, ".jpg") != 0) {
-    builder += "Content-Type: image/jpeg";
-    builder += "\n";
+    strcat( builder, "Content-Type: image/jpeg");
+    strcat( builder, "\n");
   }
   else if (strstr(filename, ".gif") != 0) {
-    builder += "Content-Type: image/gif";
-    builder += "\n";
+    strcat( builder, "Content-Type: image/gif");
+    strcat( builder, "\n");
   }
   else if (strstr(filename, ".3gp") != 0) {
-    builder += "Content-Type: video/mpeg";
-    builder += "\n";
+    strcat( builder, "Content-Type: video/mpeg");
+    strcat( builder, "\n");
   }
   else if (strstr(filename, ".pdf") != 0) {
-    builder += "Content-Type: application/pdf";
-    builder += "\n";
+    strcat( builder, "Content-Type: application/pdf");
+    strcat( builder, "\n");
   }
   else if (strstr(filename, ".js") != 0) {
-    builder += "Content-Type: application/x-javascript";
-    builder += "\n";
+    strcat( builder, "Content-Type: application/x-javascript");
+    strcat( builder, "\n");
   }
   else if (strstr(filename, ".xml") != 0) {
-    builder += "Content-Type: application/xml";
-    builder += "\n";
+    strcat( builder, "Content-Type: application/xml");
+    strcat( builder, "\n");
   }
   else {
-    builder += "Content-Type: text/html";
-    builder += "\n";
+    strcat( builder, "Content-Type: text/html");
+    strcat( builder, "\n");
   }
-  builder += "Connection: close";
-  builder += "\n";
-  builder += "Last-Modified: " + timeString;
-  builder += "\n";
-  builder += "\n";
+  strcat( builder, "Connection: close");
+  strcat( builder, "\n");
+  strcat( builder, "Last-Modified: ");
+  strcat( builder, timeString);
+  strcat( builder, "\n");
+  strcat( builder, "\n");
   client.print(builder);
 }
 //If-Modified-Since: Wed, 28 Oct 2015 23:06:49 GMT
@@ -748,104 +799,147 @@ uint8_t dow(uint16_t y, uint8_t m, uint8_t d)
 }
 
 //Sun, 06 Nov 1994 08:49:37 GMT
-String buildRFC822String(uint16_t second, uint16_t minute, uint16_t hour, uint16_t dayOfMonth, uint16_t month, uint16_t year)
+char* buildRFC822String(uint16_t second, uint16_t minute, uint16_t hour, uint16_t dayOfMonth, uint16_t month, uint16_t year)
 {
-  String dateString  = "";
+  char* dateString  ;
   int dayOfWeek = dow(year, month, dayOfMonth);
   switch (dayOfWeek) {
     case 1:
-      dateString += "Mon";
+      strcpy(dateString, "Mon");
       break;
     case 2:
-      dateString += "Tue";
+      strcpy(dateString, "Tue");
       break;
     case 3:
-      dateString += "Wed";
+      strcpy(dateString, "Wed");
       break;
     case 4:
-      dateString += "Thu";
+      strcpy(dateString, "Thu");
       break;
     case 5:
-      dateString += "Fri";
+      strcpy(dateString, "Fri");
       break;
     case 6:
-      dateString += "Sat";
+      strcpy(dateString, "Sat");
       break;
     case 7:
-      dateString += "Sun";
+      strcpy(dateString, "Sun");
       break;
 
   }
-  dateString += ", ";
+  strcat(dateString, ", ");
   if (dayOfMonth < 10)
   {
-    dateString += "0";
+    strcat(dateString, "0");
   }
-  dateString += dayOfMonth;
-  dateString += " ";
+  char buff[2];
+  strcat(dateString, itoa(dayOfMonth, buff, 10));
+  strcat(dateString, " ");
   switch (month) {
     case 1:
-      dateString += "Jan";
+      strcat(dateString, "Jan");
       break;
     case 2:
-      dateString += "Feb";
+      strcat(dateString, "Feb");
       break;
     case 3:
-      dateString += "Mar";
+      strcat(dateString, "Mar");
       break;
     case 4:
-      dateString += "Apr";
+      strcat(dateString, "Apr");
       break;
     case 5:
-      dateString += "May";
+      strcat(dateString, "May");
       break;
     case 6:
-      dateString += "Jun";
+      strcat(dateString, "Jun");
       break;
     case 7:
-      dateString += "Jul";
+      strcat(dateString, "Jul");
       break;
     case 8:
-      dateString += "Aug";
+      strcat(dateString, "Aug");
       break;
     case 9:
-      dateString += "Sep";
+      strcat(dateString, "Sep");
       break;
     case 10:
-      dateString += "Oct";
+      strcat(dateString, "Oct");
       break;
     case 11:
-      dateString += "Nov";
+      strcat(dateString, "Nov");
       break;
     case 12:
-      dateString += "Dec";
+      strcat(dateString, "Dec");
       break;
 
   }
-  dateString += " ";
-  dateString += year;
-  dateString += " ";
+  strcat(dateString, " ");
+  strcat(dateString, itoa(year, buff, 10));
+  strcat(dateString, " ");
 
   if (hour < 10)
   {
-    dateString += "0";
+    strcat(dateString, "0");
   }
-  dateString += hour;
-  dateString += ":";
+  strcat(dateString, itoa(hour, buff, 10));
+  strcat(dateString, ":");
   if (minute < 10)
   {
-    dateString += "0";
+    strcat(dateString, "0");
   }
-  dateString += minute;
-  dateString += ":";
+  strcat(dateString, itoa(minute, buff, 10));
+  strcat(dateString, ":");
   if (second < 10)
   {
-    dateString += "0";
+    strcat(dateString, "0");
   }
-  dateString += second;
-  dateString += " GMT";
+  strcat(dateString, itoa(second, buff, 10));
+  strcat(dateString, " GMT");
 
   return dateString;
 }
 
+
+int indexOf (char* base, char* str) {
+  return strcspn(base, str);
+}
+
+
+int freeRam ()
+{
+  extern int __heap_start, *__brkval;
+  int v;
+  return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval);
+}
+
+char* subString (const char* input, int offset, int len, char subbuff[])
+{
+  memcpy( subbuff, &input[offset], len );
+  subbuff[len] = '\0';
+
+  return subbuff;
+}
+
+
+int splitByDelim(const char* delimiter, char* toSplit, char* outputArray[]) {
+  int outlen = 0;
+  char *p = strtok(toSplit, delimiter);
+  while (p) {
+    if (outlen >= sizeof(outputArray)) {
+      break;
+    }
+    outputArray[outlen] = p;
+    p = strtok(NULL, delimiter);
+    outlen++;
+  }
+
+  return outlen;
+}
+
+bool endsWith (char* base, char* str) {
+  int blen = strlen(base);
+  int slen = strlen(str);
+  return (blen >= slen) && (0 == strcmp(base + blen - slen, str));
+}
 
