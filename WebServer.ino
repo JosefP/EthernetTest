@@ -40,7 +40,7 @@ byte mac[] = {
 };
 IPAddress ip(192, 168, 0, 126);
 
-char* dataFilesExtension = (char *)".TXT";
+char* dataFilesExtension = (char *)".BIN";
 char* dataRootDirectory = (char *)"/Data/";
 char* queryStringDelimiter = (char *)"|";
 char* pathDelimiter = (char *)"/";
@@ -155,6 +155,8 @@ void processGetDays(EthernetClient client, char* filename) {
   char* dates[50];
   int outlenDates = splitByDelim(queryStringDelimiter, months, dates,50);
 
+  
+
   getDatePathsCount = 0;
   for (int j = 0; j < outlenDates; j++)
   {
@@ -182,10 +184,11 @@ void processGetDays(EthernetClient client, char* filename) {
 
       getDatePaths[getDatePathsCount] =  strdup(path);
       getDatePathsCount++;
-
+      
     }
 
   }
+  
   registerGetDateForDays();
 
 
@@ -220,7 +223,6 @@ void processGetMonths(EthernetClient client, char* filename) {
       getDatePathsCount++;
     }
   }
-
   registerGetDateForMonths();
 
   disableCheck(&timeToCheckEthernet);
@@ -249,8 +251,6 @@ void processGetYears(EthernetClient client, char* filename) {
         char subBuffer [3];
         uint8_t yearVar = atoi(subString(date, 0, 2, subBuffer)) + yearDirectoryInt;
         uint8_t monthVar = atoi(subString(date, 2, 2, subBuffer)) ;
-        //Serial.print("M7:");
-        //Serial.println(yearVar);
         char filePath[18];
         char buffer [3];
         
@@ -307,6 +307,8 @@ void checkEthernet() {
           unsigned char buff[size];
           int r = client.read(buff, size);
           char* filename = processFile((char*)buff);
+          Serial.print("Requested:");
+          Serial.println(filename);
           //GetYears.cshtml?0008|0009|0010|0011|0012|0101|0102|0103|0104|0105|0106|
 
           if (strstr(filename, "GetYears.cshtml?") != 0) {
@@ -323,7 +325,6 @@ void checkEthernet() {
             processGetDays(client, filename);
             break;
           }
-
           processSDFile(client, filename);
           break;
         }
@@ -334,8 +335,8 @@ void checkEthernet() {
 
 void checkContent() {
   if (contentFile.available()) {
-    unsigned char buff[512];
-    int wr = contentFile.read(buff, 512);
+    char buff[1024];
+    int wr = contentFile.read(buff, 1024);
     client.write(buff, wr);
   } else {
     contentFile.close();
@@ -546,14 +547,11 @@ void registerGetDateForMonths() {
 void registerStop() {
   stopCounter = 0;
   int pos = 0;
-
   for (int i = 0; i < getDatePathsCount; i++) {    
     free(getDatePaths[i]);
-    
   }
   
-    
-  
+    getDatePathsCount = 0;
   client.beginStop();
   planCheckImmediately(&timeToCheckEthernetStop);
 }
@@ -663,6 +661,7 @@ void code200(EthernetClient client, char* filename) {
   char  builder[250];
   strcpy( builder, "HTTP/1.1 200 OK");
   strcat( builder, "\n");
+   Serial.println(filename);
   if (strstr(filename, ".htm") != 0) {
     strcat( builder, "Content-Type: text/html");
     strcat( builder, "\n");
@@ -699,6 +698,10 @@ void code200(EthernetClient client, char* filename) {
     strcat( builder, "Content-Type: application/xml");
     strcat( builder, "\n");
   }
+  else if (strstr(filename, ".bin") != 0) {
+    strcat( builder, "text/plain");
+    strcat( builder, "\n");
+  }
   else {
     strcat( builder, "Content-Type: text/html");
     strcat( builder, "\n");
@@ -720,9 +723,9 @@ void code200(EthernetClient client, char* filename, File file) {
   uint16_t hour = FAT_HOUR(p.lastWriteTime);
   uint16_t minute = FAT_MINUTE(p.lastWriteTime);
   uint16_t second = FAT_SECOND(p.lastWriteTime);
-//char timeString[30];
-//buildRFC822String(second, minute, hour, day, month, year,timeString);
-
+char timeString[30];
+buildRFC822String(second, minute, hour, day, month, year,timeString);
+Serial.println(filename);
   strcpy( builder, "HTTP/1.1 200 OK");
   strcat( builder, "\n");
   if (strstr(filename, ".htm") != 0) {
@@ -761,6 +764,10 @@ void code200(EthernetClient client, char* filename, File file) {
     strcat( builder, "Content-Type: application/xml");
     strcat( builder, "\n");
   }
+  else if (strstr(filename, ".bin") != 0) {
+    strcat( builder, "Content-Type: text/plain");
+    strcat( builder, "\n");
+  }
   else {
     strcat( builder, "Content-Type: text/html");
     strcat( builder, "\n");
@@ -768,9 +775,9 @@ void code200(EthernetClient client, char* filename, File file) {
   strcat( builder, "Connection: close");
   strcat( builder, "\n");
 
-  //strcat( builder, "Last-Modified: ");
+  strcat( builder, "Last-Modified: ");
 
-  //strcat( builder, timeString);
+  strcat( builder, timeString);
 
   strcat( builder, "\n");
   strcat( builder, "\n");
@@ -785,7 +792,7 @@ void code404(EthernetClient client) {
   client.println("<html><head><title>404 - Not Found</title></head><body><h1>404 - Not Found</h1></body></html>");
 }
 
-char* processFile( char clientline[255]) {
+char* processFile( char clientline[600]) {
   char *filename;
   filename = clientline + 5;
   (strstr(clientline, " HTTP"))[0] = 0;
@@ -840,7 +847,7 @@ void buildRFC822String(uint16_t second, uint16_t minute, uint16_t hour, uint16_t
   {
     strcat(dateString, "0");
   }
-  char buff[2];
+  char buff[5];
   strcat(dateString, itoa(dayOfMonth, buff, 10));
   strcat(dateString, " ");
   switch (month) {
@@ -908,6 +915,15 @@ void buildRFC822String(uint16_t second, uint16_t minute, uint16_t hour, uint16_t
   
 }
 
+void freeargpointer(char** array, int count)
+{
+    int i;
+
+    for ( i = 0; array[i]; i++ )
+        free( array[i] );
+
+    free( array );
+}
 
 int indexOf (char* base, char* str) {
   return strcspn(base, str);
@@ -929,6 +945,11 @@ char* subString (const char* input, int offset, int len, char subbuff[])
   return subbuff;
 }
 
+void freeArray(char* items[] ,int count) {
+   for (int i = 0; i < getDatePathsCount; i++) {    
+    free(items[i]);
+  }
+}
 
 int splitByDelim(const char* delimiter, char* toSplit, char* outputArray[],int arrayLength) {
   int outlen = 0;
